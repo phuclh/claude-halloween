@@ -2,11 +2,9 @@
 
 A Halloween theme for the Claude Code terminal.
 
-```
-🔮────🌙───────────────🍂──────────────🦇───────👻─────────🦇─────────────────🦇──────────────💀────💀
-❯ make the bats fly                                                                                 🥀
-🎃━🍄─━🎃━────🍂──────────∿─🍁──∿────────🍁─━🎃━────∿🍬─🍂─━🎃━─🍂──────────∿───━🎃━───🍂───🍂────🍬────🦴
-```
+<p align="center">
+  <img src="assets/demo.svg" alt="Claude Code with the Halloween theme: bats fly across the conversation above a prompt framed by flickering jack-o'-lanterns, leaves and skulls" width="100%">
+</p>
 
 - **A haunted frame around the prompt.** Bats, leaves and a moon perch on a violet edge above the prompt. Below it runs a moss vine where jack-o'-lanterns grow in random clumps and flicker their glow onto the vine. A ghost drifts along the top every so often, trailing ectoplasm. Every session gets its own random layout.
 - **Bats across the conversation.** A flock flies whole journeys over your chat, in from one edge along a swooping arc and out over another, in every direction.
@@ -51,4 +49,11 @@ While animating, the theme redraws the screen 8 times a second, which costs abou
 claude --plugin-dir ./plugins/halloween       # run it from this folder
 claude plugin validate ./plugins/halloween    # check the manifest and hooks
 claude plugin test ./plugins/halloween        # run the tests
+```
+
+The demo above is drawn by the plugin's own frame and flight code. To render it again after a change:
+
+```sh
+npx -p typescript tsc -p scripts
+node .demo-build/scripts/render-demo.js > assets/demo.svg
 ```
