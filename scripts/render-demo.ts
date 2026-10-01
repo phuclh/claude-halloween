@@ -6,7 +6,7 @@
  *   npx -p typescript tsc -p scripts
  *   node .demo-build/scripts/render-demo.js > assets/demo.svg
  */
-import { batAt, flockSize } from '../plugins/halloween/hooks/bats'
+import { batAt, flockAt, flockSize } from '../plugins/halloween/hooks/bats'
 import { bottomRuleCells, createFrameLayout, PALETTE, topRuleCells } from '../plugins/halloween/hooks/frame'
 import type { Cell, FrameLayout } from '../plugins/halloween/hooks/frame'
 
@@ -21,6 +21,10 @@ const PADDING = 20
 const TITLE_BAR = 30
 
 const FLIGHT_TICK_MS = 125
+/** Ticks searched for the moment the demo opens on: the busiest sky in it. */
+const OPENING_SEARCH_TICKS = 400
+/** Frame steps the ghost has drifted in when the demo opens. */
+const GHOST_HEAD_START = 12
 const FRAME_STEP_MS = 250
 const FLICKER_STEPS = 48
 
@@ -197,7 +201,7 @@ function drawGhost(layout: FrameLayout): { under: string; over: string } {
     keyframes.push(`${fmt((step / period) * 100)}%{${value}}`)
   }
 
-  const delay = -((((0 - enter) % period) + period) % period) * FRAME_STEP_MS
+  const delay = -GHOST_HEAD_START * FRAME_STEP_MS
   css.push(
     `@keyframes ghost{${keyframes.join('')}}.ghost{animation:ghost ${period * FRAME_STEP_MS}ms step-end ${delay}ms infinite}`,
   )
@@ -210,12 +214,30 @@ function drawGhost(layout: FrameLayout): { under: string; over: string } {
   }
 }
 
+/** The tick with the most bats in the air, so the demo opens on a lively sky. */
+function busiestTick(): number {
+  let busiest = 0
+  let most = -1
+
+  for (let tick = 0; tick < OPENING_SEARCH_TICKS; tick++) {
+    const flying = flockAt(7, COLUMNS, SKY_ROWS, tick).length
+
+    if (flying > most) {
+      most = flying
+      busiest = tick
+    }
+  }
+
+  return busiest
+}
+
 /**
  * Every bat of the flock on a loop of its own: one whole journey and the rest
  * after it, so the flock never lines up the same way twice.
  */
 function drawBats(): string {
   const parts: string[] = []
+  const opening = busiestTick()
 
   for (let bat = 0; bat < flockSize(COLUMNS, SKY_ROWS); bat++) {
     const at = (tick: number) => batAt(7, bat, COLUMNS, SKY_ROWS, tick)
@@ -247,7 +269,7 @@ function drawBats(): string {
       }
     }
 
-    const delay = -((((0 - start) % period) + period) % period) * FLIGHT_TICK_MS
+    const delay = -((((opening - start) % period) + period) % period) * FLIGHT_TICK_MS
     css.push(
       `@keyframes bat${bat}{${keyframes.join('')}}.bat${bat}{animation:bat${bat} ${period * FLIGHT_TICK_MS}ms step-end ${delay}ms infinite}`,
     )

@@ -299,39 +299,50 @@ test('the scene sleeps after a quiet spell and wakes when the person types', asy
   expect(await bats()).toBeGreaterThan(0)
 })
 
-test('every bat flies whole journeys, in over one edge and out over another, with no jumps', () => {
+test('every bat flies whole, smooth journeys from one side to the other', () => {
   const columns = 110
   const rows = 30
-  const isOutside = (spot: { x: number; y: number }) =>
-    spot.x < 0 || spot.x > columns - 2 || spot.y < 0 || spot.y >= rows
+  const isOffstage = (spot: { x: number }) => spot.x < 0 || spot.x > columns - 2
 
   for (let bat = 0; bat < flockSize(columns, rows); bat++) {
     let journey: { x: number; y: number }[] = []
     let journeys = 0
+    const directions = new Set<number>()
 
-    for (let tick = 0; tick < 600; tick++) {
+    for (let tick = 0; tick < 1200; tick++) {
       const spot = batAt(4242, bat, columns, rows, tick)
-      const last = journey[journey.length - 1]
-
-      if (spot !== undefined && last !== undefined) {
-        expect(Math.abs(spot.x - last.x)).toBeLessThanOrEqual(8)
-        expect(Math.abs(spot.y - last.y)).toBeLessThanOrEqual(3)
-      }
 
       if (spot !== undefined) {
+        const last = journey[journey.length - 1]
+        const first = journey[1]
+
+        if (last !== undefined && first !== undefined && journey[0] !== undefined) {
+          expect(spot.x - last.x).toBe(first.x - journey[0].x)
+          expect(Math.abs(spot.y - last.y)).toBeLessThanOrEqual(1)
+        }
+
         journey.push(spot)
         continue
       }
 
-      if (journey.length > 0 && tick > journey.length) {
-        expect(isOutside(journey[0]!) || journey.length === tick).toBe(true)
-        expect(isOutside(journey[journey.length - 1]!)).toBe(true)
+      if (journey.length > 1 && tick > journey.length) {
+        expect(isOffstage(journey[0]!)).toBe(true)
+        expect(isOffstage(journey[journey.length - 1]!)).toBe(true)
+        expect(Math.abs(journey[1]!.x - journey[0]!.x)).toBeLessThanOrEqual(2)
+        directions.add(Math.sign(journey[1]!.x - journey[0]!.x))
         journeys++
       }
 
       journey = []
     }
 
-    expect(journeys).toBeGreaterThan(3)
+    expect(journeys).toBeGreaterThan(4)
+    expect(directions.size).toBe(2)
   }
+})
+
+test('the flock stays small enough to read through', () => {
+  expect(flockSize(110, 31)).toBe(7)
+  expect(flockSize(60, 15)).toBe(4)
+  expect(flockSize(300, 80)).toBe(12)
 })

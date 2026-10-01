@@ -7,7 +7,7 @@ A Halloween theme for the Claude Code terminal.
 </p>
 
 - **A haunted frame around the prompt.** Bats, leaves and a moon perch on a violet edge above the prompt. Below it runs a moss vine where jack-o'-lanterns grow in random clumps and flicker their glow onto the vine. A ghost drifts along the top every so often, trailing ectoplasm. Every session gets its own random layout.
-- **Bats across the conversation.** A flock flies whole journeys over your chat, in from one edge along a swooping arc and out over another, in every direction.
+- **Bats across the conversation.** A small flock flies whole journeys over your chat: in from one side and out the other, rising or falling along a gentle arc, some cruising and some darting.
 - **Spooky words.** The spinner says things like *Brewing…*, *Summoning…* or *Stirring the cauldron…*, and finished turns read *Haunted for 12s*.
 
 ## Install

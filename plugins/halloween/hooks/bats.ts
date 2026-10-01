@@ -4,105 +4,78 @@ import { noise } from './noise'
 
 /**
  * A flock of bats crossing a region of the conversation. Every bat flies whole
- * journeys: in from one edge, along a swooping arc in a direction of its own,
- * out over another edge, then a rest off-stage before the next one.
+ * journeys: in over one side, across at a steady pace while rising or falling
+ * along a gentle arc of its own, out over the other side, then a rest
+ * off-stage before the next one, which may head the other way.
+ *
+ * Steady is what makes it smooth: a bat moves the same one or two cells every
+ * tick, and its height eases along a curve that never leaves the region, so
+ * no frame jumps further than the one before.
  *
  * Pure: where every bat is follows from the flock's seed and the tick alone,
  * so a redraw at any moment lands each bat where it should be.
  */
 
-type Point = { x: number; y: number }
-
-type Edge = 'left' | 'right' | 'top' | 'bottom'
-
-/** Ticks one bat's cycle of journey plus rest lasts, at least and at most. */
-const SHORTEST_CYCLE = 50
-const LONGEST_CYCLE = 95
+/** Cells past each side a journey starts and ends, so a bat enters and leaves out of sight. */
+const OFFSTAGE = 3
 /** Ticks a bat rests off-stage between two journeys, at least and at most. */
-const SHORTEST_REST = 4
-const LONGEST_REST = 18
+const SHORTEST_REST = 6
+const LONGEST_REST = 40
 
-const EDGES: readonly Edge[] = ['left', 'right', 'left', 'right', 'left', 'right', 'top', 'bottom']
-
-function edgeOf(roll: number): Edge {
-  return EDGES[Math.floor(roll * EDGES.length)] ?? 'left'
+/** Cells a bat moves each tick: half the flock cruise, half dart. */
+function paceOf(seed: number, bat: number): number {
+  return noise(seed, bat, 1) < 0.5 ? 1 : 2
 }
 
-/** A point just outside the region on the given edge, `along` it in [0, 1). */
-function pointOn(edge: Edge, along: number, columns: number, rows: number): Point {
-  switch (edge) {
-    case 'left':
-      return { x: -3, y: along * rows }
-    case 'right':
-      return { x: columns + 1, y: along * rows }
-    case 'top':
-      return { x: along * columns, y: -2 }
-    case 'bottom':
-      return { x: along * columns, y: rows + 1 }
-  }
+function restOf(seed: number, bat: number): number {
+  return SHORTEST_REST + Math.floor(noise(seed, bat, 2) * (LONGEST_REST - SHORTEST_REST))
 }
 
 /**
- * Where journey `journey` of bat `bat` starts, bends and ends, and how long
- * the bat rests after it. Every journey of a bat takes the same time, so a
- * long diagonal is flown faster than a short hop between two edges.
+ * Which way journey `journey` of bat `bat` crosses, and the heights it starts
+ * at, bends toward and ends at, all inside the region's rows.
  */
-function journeyOf(seed: number, bat: number, journey: number, columns: number, rows: number) {
+function journeyOf(seed: number, bat: number, journey: number, rows: number) {
   const roll = (salt: number): number => noise(seed, bat, journey, salt)
-  const from = edgeOf(roll(1))
-  let to = edgeOf(roll(2))
+  const lowest = Math.max(0, rows - 1)
 
-  if (to === from) {
-    to = from === 'left' ? 'right' : from === 'right' ? 'left' : from === 'top' ? 'bottom' : 'top'
+  return {
+    isLeftward: roll(1) < 0.5,
+    from: roll(2) * lowest,
+    bend: roll(3) * lowest,
+    to: roll(4) * lowest,
   }
-
-  const start = pointOn(from, roll(3), columns, rows)
-  const end = pointOn(to, roll(4), columns, rows)
-  const bend = { x: (0.1 + roll(5) * 0.8) * columns, y: roll(6) * rows }
-  const rest = SHORTEST_REST + Math.floor(roll(7) * (LONGEST_REST - SHORTEST_REST))
-
-  return { start, bend, end, rest, flutter: roll(8) * Math.PI * 2 }
-}
-
-/** The width a cycle's length is set for; a wider conversation takes longer to cross. */
-const CYCLE_COLUMNS = 110
-
-function cycleLengthOf(seed: number, bat: number, columns: number): number {
-  const cycle = SHORTEST_CYCLE + Math.floor(noise(seed, bat, 0) * (LONGEST_CYCLE - SHORTEST_CYCLE))
-
-  return Math.round(cycle * Math.max(1, columns / CYCLE_COLUMNS))
 }
 
 /**
  * Where bat `bat` is at `tick`, or `undefined` while it rests between
- * journeys. Positions may lie outside the region as it enters and leaves.
+ * journeys. Positions lie past the sides as it enters and leaves.
  */
 export function batAt(seed: number, bat: number, columns: number, rows: number, tick: number): BatSpot | undefined {
-  const cycle = cycleLengthOf(seed, bat, columns)
+  const pace = paceOf(seed, bat)
+  const flight = Math.ceil((columns + OFFSTAGE * 2) / pace)
+  const cycle = flight + restOf(seed, bat)
   const shifted = tick + Math.floor(noise(seed, bat, 9) * cycle)
-  const journey = Math.floor(shifted / cycle)
   const elapsed = shifted % cycle
-  const { start, bend, end, rest, flutter } = journeyOf(seed, bat, journey, columns, rows)
-  const duration = cycle - rest
 
-  if (elapsed > duration) {
+  if (elapsed >= flight) {
     return undefined
   }
 
-  const t = elapsed / duration
-  const along = (from: number, via: number, to: number): number =>
-    (1 - t) * (1 - t) * from + 2 * (1 - t) * t * via + t * t * to
-  const bob = Math.sin(elapsed * 0.9 + flutter) * 0.6
+  const { isLeftward, from, bend, to } = journeyOf(seed, bat, Math.floor(shifted / cycle), rows)
+  const travelled = elapsed * pace
+  const t = elapsed / flight
+  const height = (1 - t) * (1 - t) * from + 2 * (1 - t) * t * bend + t * t * to
 
   return {
-    x: Math.round(along(start.x, bend.x, end.x)),
-    y: Math.round(along(start.y, bend.y, end.y) + bob),
+    x: isLeftward ? columns + OFFSTAGE - 2 - travelled : -OFFSTAGE + travelled,
+    y: Math.round(height),
   }
 }
 
 /** How many bats a region of this size holds: more room, a bigger flock. */
 export function flockSize(columns: number, rows: number): number {
-  return Math.min(28, Math.max(10, Math.round((columns * rows) / 200)))
+  return Math.min(12, Math.max(4, Math.round((columns * rows) / 500)))
 }
 
 /** Every bat of the flock inside the region at `tick`. */
