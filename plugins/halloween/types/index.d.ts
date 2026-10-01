@@ -3,6 +3,13 @@ export type BatSpot = { x: number; y: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    halloween: { isEnabled: boolean; draftRows: number; frameTick: number; flightTick: number; isAwake: boolean }
+    halloween: {
+      isEnabled: boolean
+      hasSounds: boolean
+      draftRows: number
+      frameTick: number
+      flightTick: number
+      isAwake: boolean
+    }
   }
 }

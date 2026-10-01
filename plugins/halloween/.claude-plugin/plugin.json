@@ -1,10 +1,10 @@
 {
   "name": "halloween",
-  "version": "0.1.2",
-  "description": "Halloween theme for Claude Code: a haunted frame of pumpkins, leaves and skulls around the prompt, bats flying across the conversation, and spooky spinner words",
+  "version": "0.2.0",
+  "description": "Halloween theme for Claude Code: a haunted frame of pumpkins, leaves and skulls around the prompt, bats flying across the conversation, spooky spinner words, and optional spooky sounds",
   "author": { "name": "LE PHUC H" },
   "homepage": "https://github.com/phuclh/claude-halloween",
   "repository": "https://github.com/phuclh/claude-halloween",
-  "keywords": ["halloween", "theme", "fun", "mod"],
+  "keywords": ["halloween", "theme", "fun", "mod", "sounds"],
   "types": "./types/index.d.ts"
 }

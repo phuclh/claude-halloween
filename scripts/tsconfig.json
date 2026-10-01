@@ -3,13 +3,13 @@
     "target": "es2022",
     "lib": ["es2023"],
     "types": [],
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "outDir": "../.demo-build",
     "rootDir": ".."
   },
-  "files": ["render-demo.ts"]
+  "files": ["render-demo.ts", "render-sounds.ts"]
 }

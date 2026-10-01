@@ -4,14 +4,18 @@ import type { ElementTable, EngineInterface, Register, RenderElement, RenderInpu
 import { flockAt } from './bats'
 import { bottomRuleCells, createFrameLayout, sideGlyph, topRuleCells } from './frame'
 import type { Cell } from './frame'
+import { createEnterDeck, keystrokeClip } from './sounds'
 
 const isEnabled = atom({ plugin: 'halloween', key: 'isEnabled' } as const, true)
+const hasSounds = atom({ plugin: 'halloween', key: 'hasSounds' } as const, false)
 const draftRows = atom({ plugin: 'halloween', key: 'draftRows' } as const, 1)
 const frameTick = atom({ plugin: 'halloween', key: 'frameTick' } as const, 0)
 const flightTick = atom({ plugin: 'halloween', key: 'flightTick' } as const, 0)
 const isAwake = atom({ plugin: 'halloween', key: 'isAwake' } as const, false)
 
 const STORE_KEY = 'isEnabled'
+const SOUNDS_STORE_KEY = 'hasSounds'
+const SOUNDS_ARGUMENT = 'sounds'
 /**
  * One clock drives everything: the bats move every tick, the frame every
  * other tick, so both land in the same redraw. With no typing and no turn
@@ -101,6 +105,13 @@ const visibleRows = new Map<string, number>()
 
 /** The row carrying the flock (`''` while none on screen does), and its order. */
 let flockRow = { requestId: '', order: -1 }
+
+/** When the last keystroke sound played, in the clock's milliseconds. */
+let lastKeystrokeAt = Number.NEGATIVE_INFINITY
+
+/** Deals the next Enter sound, and stops the one still playing when it does. */
+const nextEnterClip = createEnterDeck()
+let enterClip: AbortController | undefined
 
 function hashOf(text: string): number {
   let hash = 0
@@ -311,15 +322,93 @@ async function advance($: EngineInterface, clock: NonNullable<typeof animation>)
   }
 }
 
+async function isSounding($: EngineInterface): Promise<boolean> {
+  return (await read($, hasSounds)) && (await read($, isEnabled))
+}
+
+/**
+ * Plays one of the plugin's clips without holding up the hook that asked; a
+ * terminal with no player plays nothing.
+ */
+function play($: EngineInterface, asset: string, signal?: AbortSignal): void {
+  $.audio.play({ asset }, signal === undefined ? undefined : { signal }).catch(() => undefined)
+}
+
+/** A bat squeaks or lightning cracks for an edit the person typed. */
+async function soundKeystroke($: EngineInterface, edit: { start: number; end: number; inputText: string }): Promise<void> {
+  if (!(await isSounding($))) {
+    return
+  }
+
+  const now = await $.clock.now()
+  const clip = keystrokeClip(edit, now - lastKeystrokeAt)
+
+  if (clip !== undefined) {
+    lastKeystrokeAt = now
+    play($, clip)
+  }
+}
+
+/** The next laugh, wail, organ or thunder in the deck, cutting off the last one. */
+function soundEnter($: EngineInterface): void {
+  enterClip?.abort()
+  enterClip = new AbortController()
+  play($, nextEnterClip(), enterClip.signal)
+}
+
+async function toggleSounds($: EngineInterface): Promise<{ text: string }> {
+  const isNowOn = !(await read($, hasSounds))
+  await update($, hasSounds, () => isNowOn)
+  await $.store.set(SOUNDS_STORE_KEY, isNowOn)
+
+  if (!isNowOn) {
+    enterClip?.abort()
+
+    return { text: 'Spooky sounds off. Run /halloween sounds to bring them back.' }
+  }
+
+  const isThemeComingBack = !(await read($, isEnabled))
+
+  if (isThemeComingBack) {
+    await setTheme($, true)
+  }
+
+  soundEnter($)
+
+  return {
+    text: `🔊 Spooky sounds on${isThemeComingBack ? ', and the Halloween theme with them' : ''}. Bats squeak and lightning cracks as you type, and Enter gets a cackle. Sounds play on macOS.`,
+  }
+}
+
+/** Turns the theme on or off and remembers it; off, the bats go home and any sound stops. */
+async function setTheme($: EngineInterface, isOn: boolean): Promise<void> {
+  await update($, isEnabled, () => isOn)
+  await $.store.set(STORE_KEY, isOn)
+
+  if (isOn) {
+    await wake($)
+
+    return
+  }
+
+  enterClip?.abort()
+  await sleep($)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'halloween',
-      description: 'Toggle the Halloween theme (bats, pumpkins, skulls around the prompt)',
+      description: 'Toggle the Halloween theme (bats, pumpkins, skulls around the prompt); "sounds" toggles its sounds',
+      argumentHint: '[sounds]',
     })
 
     if ((await $.store.get(STORE_KEY)) === false) {
       await update($, isEnabled, () => false)
+    }
+
+    if ((await $.store.get(SOUNDS_STORE_KEY)) === true) {
+      await update($, hasSounds, () => true)
     }
 
     await wake($)
@@ -327,21 +416,36 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'halloween' }, async $ => {
+  on('command.run', { command: 'halloween' }, async ($, e) => {
+    const option = e.args.trim()
+
+    if (option.toLowerCase() === SOUNDS_ARGUMENT) {
+      return toggleSounds($)
+    }
+
+    if (option !== '') {
+      return {
+        text: `No option "${option}": run /halloween to turn the theme on or off, or /halloween sounds for its sounds.`,
+      }
+    }
+
     const isNowEnabled = !(await read($, isEnabled))
-    await update($, isEnabled, () => isNowEnabled)
-    await $.store.set(STORE_KEY, isNowEnabled)
-    await (isNowEnabled ? wake($) : sleep($))
+    await setTheme($, isNowEnabled)
+
+    if (!isNowEnabled) {
+      return { text: 'Halloween theme off. Run /halloween to bring the bats back.' }
+    }
 
     return {
-      text: isNowEnabled
+      text: (await read($, hasSounds))
         ? '🎃 Halloween theme on. The bats are back.'
-        : 'Halloween theme off. Run /halloween to bring the bats back.',
+        : '🎃 Halloween theme on. The bats are back. Try /halloween sounds for spooky sounds.',
     }
   })
 
   on('prompt.edit', async ($, e, next) => {
     void wake($)
+    void soundKeystroke($, e)
     const box = await next(e)
     const rows = rowsOfDraft(box.text)
 
@@ -364,6 +468,10 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     void wake($)
     await update($, draftRows, () => 1)
+
+    if (e.origin.kind === 'composer' && (await isSounding($))) {
+      soundEnter($)
+    }
 
     return next(e)
   })

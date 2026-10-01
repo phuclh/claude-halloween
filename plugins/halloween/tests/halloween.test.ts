@@ -3,6 +3,7 @@ import type { On } from 'claude-code'
 
 import { batAt, flockSize } from '../hooks/bats'
 import { bottomRuleCells, createFrameLayout, PALETTE, topRuleCells } from '../hooks/frame'
+import { BAT_CLIPS, CRACK_CLIPS, ENTER_CLIPS, KEYSTROKE_GAP_MS, keystrokeClip } from '../hooks/sounds'
 
 const BAND = {
   plugin: 'halloween',
@@ -23,6 +24,11 @@ const HALLOWEEN_COMMAND = {
   origin: { kind: 'composer' },
   presentation: { isFullscreen: false, columns: 80 },
 } as const
+
+const SOUNDS_COMMAND = { ...HALLOWEEN_COMMAND, args: 'sounds' } as const
+
+/** The person pressing Enter on a prompt. */
+const ENTER = { text: 'boo', wait: false, origin: { kind: 'composer' } } as const
 
 const FULLSCREEN = { columns: 60, rows: 30, isFullscreen: true }
 
@@ -66,9 +72,9 @@ function seededRandom(seed: number): () => number {
 }
 
 /** Answers what a session start needs beneath the plugin, on a mocked clock it hands back. */
-function sessionBeneath(on: On) {
+function sessionBeneath(on: On, stored: Record<string, unknown> = {}) {
   const clock = mock.clock(on)
-  mock.store(on)
+  mock.store(on, stored)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
 
@@ -76,6 +82,19 @@ function sessionBeneath(on: On) {
 }
 
 const TERMINAL_SESSION = { cwd: '/tmp', surface: 'terminal', isInteractive: true } as const
+
+/** Plays clips as the engine beneath would, keeping the list of what played. */
+function recordPlays(on: On): string[] {
+  const played: string[] = []
+  on('audio.play', ($, e) => {
+    played.push(e.clip.asset ?? '')
+
+    return { value: undefined }
+  })
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+
+  return played
+}
 
 const SPOOKY_SPINNER_WORDS = /Haunting|Brewing|Conjuring|Cackling|Summoning|Bewitching|Lurking|Creeping|Hexing|Spellcasting|Carving pumpkins|Howling|Rattling bones|Stirring the cauldron/
 
@@ -345,4 +364,84 @@ test('the flock stays small enough to read through', () => {
   expect(flockSize(110, 31)).toBe(7)
   expect(flockSize(60, 15)).toBe(4)
   expect(flockSize(300, 80)).toBe(12)
+})
+
+test('Enter stays quiet until /halloween sounds, then never plays the same sound twice running', async ($, on) => {
+  mock.store(on)
+  const played = recordPlays(on)
+
+  await $.prompt.submit(ENTER)
+  expect(played).toEqual([])
+
+  expect((await $.command.run(SOUNDS_COMMAND)).text).toMatch(/sounds on/)
+  expect(played).toHaveLength(1)
+
+  for (let enter = 0; enter < 12; enter++) {
+    await $.prompt.submit(ENTER)
+  }
+
+  const enterClips: readonly string[] = ENTER_CLIPS
+  expect(played).toHaveLength(13)
+  expect(played.every(clip => enterClips.includes(clip))).toBe(true)
+  expect(new Set(played).size).toBe(ENTER_CLIPS.length)
+  played.slice(1).forEach((clip, index) => expect(clip).not.toBe(played[index]))
+
+  expect((await $.command.run(SOUNDS_COMMAND)).text).toMatch(/sounds off/)
+  await $.prompt.submit(ENTER)
+  expect(played).toHaveLength(13)
+})
+
+test('the sounds stay on in a new session, for the person\'s own Enter, and hush while the theme is off', async ($, on) => {
+  sessionBeneath(on, { hasSounds: true })
+  const played = recordPlays(on)
+  await $.session.start(TERMINAL_SESSION)
+
+  await $.prompt.submit(ENTER)
+  expect(played).toHaveLength(1)
+
+  await $.prompt.submit({ ...ENTER, origin: { kind: 'task-notification' } })
+  expect(played).toHaveLength(1)
+
+  await $.command.run(HALLOWEEN_COMMAND)
+  await $.prompt.submit(ENTER)
+  expect(played).toHaveLength(1)
+})
+
+test('a keystroke squeaks like a bat or cracks like lightning, but not for a cursor move or faster than the gap', () => {
+  const typed = { start: 3, end: 3, inputText: 'o' }
+  const keystrokeClips: readonly (string | undefined)[] = [...BAT_CLIPS, ...CRACK_CLIPS]
+  const crackClips: readonly (string | undefined)[] = CRACK_CLIPS
+  const random = seededRandom(7)
+  const clips = Array.from({ length: 200 }, () => keystrokeClip(typed, KEYSTROKE_GAP_MS, random))
+  const cracks = clips.filter(clip => crackClips.includes(clip)).length
+
+  expect(clips.every(clip => keystrokeClips.includes(clip))).toBe(true)
+  expect(cracks).toBeGreaterThan(10)
+  expect(cracks).toBeLessThan(clips.length / 2)
+  expect(keystrokeClip({ start: 2, end: 3, inputText: '' }, 1000)).toBeDefined()
+  expect(keystrokeClip({ start: 1, end: 1, inputText: '' }, 1000)).toBeUndefined()
+  expect(keystrokeClip(typed, KEYSTROKE_GAP_MS - 1)).toBeUndefined()
+})
+
+test('/halloween sounds brings the theme back with it, and a mistyped option changes nothing', async ($, on) => {
+  mock.store(on)
+  drawModeLabels(on)
+  const played = recordPlays(on)
+  const isFramed = async () => {
+    const labels = await $.ui.mount(MODE_LABELS)
+    const { rules } = await framePieces(labels)
+    await labels.unmount()
+
+    return rules.length > 0
+  }
+
+  expect((await $.command.run({ ...HALLOWEEN_COMMAND, args: 'souunds' })).text).toMatch(/No option "souunds"/)
+  expect(await isFramed()).toBe(true)
+
+  await $.command.run(HALLOWEEN_COMMAND)
+  expect(await isFramed()).toBe(false)
+
+  expect((await $.command.run(SOUNDS_COMMAND)).text).toMatch(/sounds on, and the Halloween theme with them/)
+  expect(await isFramed()).toBe(true)
+  expect(played).toHaveLength(1)
 })
