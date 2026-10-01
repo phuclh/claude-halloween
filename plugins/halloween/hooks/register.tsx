@@ -28,13 +28,14 @@ const HINT_TAIL = '   🎃 🍁 💀 🍂 🦇'
 const SPOOKY_MODE = '🦇 spooky season'
 
 /**
- * Where the prompt box sits relative to the hint line under it in the
- * fullscreen terminal: the hint site starts two columns in, the bottom rule is
- * three rows up (past the status line), the draft rows above it, then the top
- * rule.
+ * Where the prompt box sits relative to the footer's mode labels, which the
+ * terminal keeps right-aligned on the first row under the box whatever else
+ * the footer holds (a status line or none): the bottom rule is the row above
+ * them, the draft rows above it, then the top rule. The labels end this many
+ * columns short of the right edge.
  */
-const HINT_INDENT = 2
-const BOTTOM_RULE_ROW = -3
+const MODES_RIGHT_MARGIN = 2
+const BOTTOM_RULE_ROW = -1
 
 const BAT = '🦇'
 
@@ -126,6 +127,19 @@ function rowsOfDraft(text: string): number {
   return text
     .split('\n')
     .reduce((rows, line) => rows + Math.max(1, Math.ceil(Array.from(line).length / width)), 0)
+}
+
+/** Whether the frame is drawn here: the fullscreen terminal, wide enough for it. */
+function isFramed(e: { surface: string; viewport?: { columns: number; isFullscreen?: boolean } }): e is {
+  surface: 'terminal'
+  viewport: { columns: number; isFullscreen: true }
+} {
+  return e.surface === 'terminal' && e.viewport?.isFullscreen === true && e.viewport.columns >= MIN_FRAME_COLUMNS
+}
+
+/** Cells a label takes in the terminal: two for an emoji, one for the rest. */
+function widthOf(text: string): number {
+  return Array.from(text).reduce((cells, character) => cells + ((character.codePointAt(0) ?? 0) > 0xffff ? 2 : 1), 0)
 }
 
 /**
@@ -375,44 +389,11 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    if (!(await read($, isEnabled))) {
+    if (!(await read($, isEnabled)) || isFramed(e)) {
       return next(e)
     }
 
-    const isFramed =
-      e.surface === 'terminal' &&
-      e.viewport?.isFullscreen === true &&
-      e.viewport.columns >= MIN_FRAME_COLUMNS
-
-    if (!isFramed) {
-      return next({ ...e, props: { ...e.props, tail: HINT_TAIL } })
-    }
-
-    const hint = await next(e)
-    const { columns } = e.viewport
-    promptColumns = columns
-    const rows = await read($, draftRows)
-    const tick = await read($, frameTick)
-    const hasGhost = await read($, isAwake)
-    const { Box, Text } = $.ui.resolve(e)
-    const topRuleRow = BOTTOM_RULE_ROW - rows - 1
-
-    return (
-      <Box flexDirection="column">
-        {hint}
-        <Box position="absolute" top={topRuleRow} left={-HINT_INDENT} width={columns}>
-          {drawCells(Text, topRuleCells(frameLayout, columns, tick, hasGhost))}
-        </Box>
-        {Array.from({ length: rows }, (_, index) => (
-          <Box position="absolute" top={BOTTOM_RULE_ROW - rows + index} left={columns - 2 - HINT_INDENT}>
-            <Text>{sideGlyph(frameLayout, index)}</Text>
-          </Box>
-        ))}
-        <Box position="absolute" top={BOTTOM_RULE_ROW} left={-HINT_INDENT} width={columns}>
-          {drawCells(Text, bottomRuleCells(frameLayout, columns, tick))}
-        </Box>
-      </Box>
-    )
+    return next({ ...e, props: { ...e.props, tail: HINT_TAIL } })
   })
 
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
@@ -420,7 +401,38 @@ export const register: Register = on => {
       return next(e)
     }
 
-    return next({ ...e, props: { ...e.props, modes: [...e.props.modes, SPOOKY_MODE] } })
+    const modes = [...e.props.modes, SPOOKY_MODE]
+    const labels = await next({ ...e, props: { ...e.props, modes } })
+
+    if (!isFramed(e)) {
+      return labels
+    }
+
+    const { columns } = e.viewport
+    promptColumns = columns
+    const rows = await read($, draftRows)
+    const tick = await read($, frameTick)
+    const hasGhost = await read($, isAwake)
+    const { Box, Text } = $.ui.resolve(e)
+    const siteLeft = columns - MODES_RIGHT_MARGIN - widthOf(modes.join(' & '))
+    const topRuleRow = BOTTOM_RULE_ROW - rows - 1
+
+    return (
+      <Box flexDirection="column">
+        {labels}
+        <Box position="absolute" top={topRuleRow} left={-siteLeft} width={columns}>
+          {drawCells(Text, topRuleCells(frameLayout, columns, tick, hasGhost))}
+        </Box>
+        {Array.from({ length: rows }, (_, index) => (
+          <Box position="absolute" top={BOTTOM_RULE_ROW - rows + index} left={columns - 2 - siteLeft}>
+            <Text>{sideGlyph(frameLayout, index)}</Text>
+          </Box>
+        ))}
+        <Box position="absolute" top={BOTTOM_RULE_ROW} left={-siteLeft} width={columns}>
+          {drawCells(Text, bottomRuleCells(frameLayout, columns, tick))}
+        </Box>
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {

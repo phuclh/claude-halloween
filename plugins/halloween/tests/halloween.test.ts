@@ -26,13 +26,33 @@ const HALLOWEEN_COMMAND = {
 
 const FULLSCREEN = { columns: 60, rows: 30, isFullscreen: true }
 
-const PROMPT_HINT = {
+/** The footer's mode labels, which the frame hangs from, in the fullscreen terminal. */
+const MODE_LABELS = {
   plugin: 'halloween',
   surface: 'terminal',
-  component: 'PromptHint',
-  props: { isDraft: false, isWorking: false, hint: '? for shortcuts' },
+  component: 'SessionMode',
+  props: { modes: [] },
   viewport: FULLSCREEN,
 } as const
+
+/** Draws the mode labels as the engine would: joined, on one row. */
+function drawModeLabels(on: On): void {
+  on('ui.render', { component: 'SessionMode' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+
+    return Text({ children: e.props.modes.join(' & ') })
+  })
+}
+
+/** The frame's pieces placed against the labels: rules span the terminal, sides sit at its right edge. */
+async function framePieces(labels: { findAll: (query: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) {
+  const placed = (await labels.findAll({ type: 'Box' })).filter(box => box.props.position === 'absolute')
+
+  return {
+    rules: placed.filter(box => box.props.width === FULLSCREEN.columns).map(box => ({ top: box.props.top, left: box.props.left })),
+    sides: placed.filter(box => box.props.width === undefined).map(box => ({ top: box.props.top, left: box.props.left })),
+  }
+}
 
 /** A repeatable random source, so a layout test rolls the same scatter every run. */
 function seededRandom(seed: number): () => number {
@@ -92,15 +112,11 @@ test('the prompt footer and spinner turn spooky', async ($, on) => {
 
 test('/halloween takes the frame off the prompt box and puts it back', async ($, on) => {
   mock.store(on)
-  on('ui.render', { component: 'PromptHint' }, ($, e) => {
-    const { Text } = $.ui.resolve(e)
-
-    return Text({ children: e.props.hint })
-  })
+  drawModeLabels(on)
   const isFramed = async () => {
-    const hint = await $.ui.mount(PROMPT_HINT)
-    const rules = (await hint.findAll({ type: 'Box' })).filter(box => box.props.position === 'absolute')
-    await hint.unmount()
+    const labels = await $.ui.mount(MODE_LABELS)
+    const { rules } = await framePieces(labels)
+    await labels.unmount()
 
     return rules.length > 0
   }
@@ -119,24 +135,17 @@ test('the theme stays off in a new session after /halloween turned it off', asyn
   mock.clock(on)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('ui.render', { component: 'PromptHint' }, ($, e) => {
-    const { Text } = $.ui.resolve(e)
-
-    return Text({ children: e.props.hint })
-  })
+  drawModeLabels(on)
 
   await $.session.start(TERMINAL_SESSION)
 
-  const hint = await $.ui.mount(PROMPT_HINT)
-  expect((await hint.findAll({ type: 'Box' })).filter(box => box.props.position === 'absolute')).toHaveLength(0)
+  const labels = await $.ui.mount(MODE_LABELS)
+  expect((await framePieces(labels)).rules).toHaveLength(0)
+  expect(await labels.find({ type: 'Text', text: /spooky season/ })).toBeUndefined()
 })
 
-test('the haunted frame sits on the prompt box rules and follows a growing draft', async ($, on) => {
-  on('ui.render', { component: 'PromptHint' }, ($, e) => {
-    const { Text } = $.ui.resolve(e)
-
-    return Text({ children: e.props.hint })
-  })
+test('the haunted frame hangs from the mode labels onto the prompt box rules and follows a growing draft', async ($, on) => {
+  drawModeLabels(on)
   let draft = ''
   on('prompt.fill', ($, e) => {
     draft = e.text
@@ -145,39 +154,44 @@ test('the haunted frame sits on the prompt box rules and follows a growing draft
   })
   on('prompt.read', () => ({ value: { text: draft, cursor: draft.length } }))
 
-  const hint = await $.ui.mount(PROMPT_HINT)
-  const ruleRows = async () =>
-    (await hint.findAll({ type: 'Box' }))
-      .filter(box => box.props.position === 'absolute' && box.props.width === FULLSCREEN.columns)
-      .map(box => box.props.top)
-  const sides = async () =>
-    (await hint.findAll({ type: 'Box' })).filter(box => box.props.position === 'absolute' && box.props.left === 56)
+  const labels = await $.ui.mount(MODE_LABELS)
+  const labelsLeft = FULLSCREEN.columns - 2 - '🦇 spooky season'.length
 
-  expect(await ruleRows()).toEqual([-5, -3])
-  expect(await sides()).toHaveLength(1)
-  expect(await hint.find({ type: 'Text', text: /🎃/ })).toBeDefined()
-  expect(await hint.find({ type: 'Text', text: /\? for shortcuts/ })).toBeDefined()
+  expect(await labels.find({ type: 'Text', text: '🦇 spooky season' })).toBeDefined()
+  expect(await framePieces(labels)).toEqual({
+    rules: [
+      { top: -3, left: -labelsLeft },
+      { top: -1, left: -labelsLeft },
+    ],
+    sides: [{ top: -2, left: FULLSCREEN.columns - 2 - labelsLeft }],
+  })
 
   await $.prompt.fill({ text: 'one\ntwo', mode: 'replace', origin: { kind: 'engine' } })
 
-  expect(await ruleRows()).toEqual([-6, -3])
-  expect(await sides()).toHaveLength(2)
+  const { rules, sides } = await framePieces(labels)
+  expect(rules.map(rule => rule.top)).toEqual([-4, -1])
+  expect(sides.map(side => side.top)).toEqual([-3, -2])
+})
+
+test('the frame stays on the prompt box when other mode labels sit beside the theme', async ($, on) => {
+  drawModeLabels(on)
+
+  const labels = await $.ui.mount({ ...MODE_LABELS, props: { modes: ['focus'] } })
+  const labelsLeft = FULLSCREEN.columns - 2 - 'focus & 🦇 spooky season'.length
+
+  expect((await framePieces(labels)).rules.map(rule => rule.left)).toEqual([-labelsLeft, -labelsLeft])
 })
 
 test('the frame animates on its own clock once the session starts', async ($, on) => {
   const clock = sessionBeneath(on)
-  on('ui.render', { component: 'PromptHint' }, ($, e) => {
-    const { Text } = $.ui.resolve(e)
-
-    return Text({ children: e.props.hint })
-  })
+  drawModeLabels(on)
 
   await $.session.start(TERMINAL_SESSION)
-  const hint = await $.ui.mount(PROMPT_HINT)
+  const labels = await $.ui.mount(MODE_LABELS)
   const frames = new Set<string>()
 
   for (let step = 0; step < 12; step++) {
-    frames.add(JSON.stringify(await hint.drawn()))
+    frames.add(JSON.stringify(await labels.drawn()))
     await clock.advance(250)
   }
 

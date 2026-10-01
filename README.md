@@ -37,7 +37,6 @@ Then start a new session.
 
 - **Fullscreen mode** for the frame and the bats: set `"tui": "fullscreen"` in `~/.claude/settings.json`, or switch with `/tui`. On other screens you get the spooky words and a small garland on the hint line.
 - **A recent Claude Code.** The theme uses Claude Code's early-access function-hook API, which may change between releases. Built and tested on Claude Code 2.1.287.
-- **A status line.** The frame is placed by counting rows up from the hint line under the prompt, and that count assumes one status-line row between the prompt and the hint. Without a status line, the frame sits one row too high.
 
 ## Performance
 
