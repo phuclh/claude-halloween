@@ -1,0 +1,17 @@
+{
+  "name": "phuclh-plugins",
+  "owner": { "name": "LE PHUC H" },
+  "metadata": {
+    "description": "Claude Code plugins by phuclh"
+  },
+  "plugins": [
+    {
+      "name": "halloween",
+      "source": "./plugins/halloween",
+      "description": "Halloween theme for Claude Code: a haunted frame of pumpkins, leaves and skulls around the prompt, bats flying across the conversation, and spooky spinner words",
+      "version": "0.1.0",
+      "author": { "name": "LE PHUC H" },
+      "category": "fun"
+    }
+  ]
+}

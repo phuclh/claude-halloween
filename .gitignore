@@ -1,0 +1,3 @@
+# Written by Claude Code each time it loads the plugin
+plugins/*/.claude-plugin/types/
+.DS_Store
