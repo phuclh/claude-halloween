@@ -1,8 +1,10 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { batAt, flockSize } from '../hooks/bats'
 import { bottomRuleCells, createFrameLayout, PALETTE, topRuleCells } from '../hooks/frame'
+import { isUnderBats } from '../hooks/selection'
 import { BAT_CLIPS, CRACK_CLIPS, ENTER_CLIPS, KEYSTROKE_GAP_MS, keystrokeClip } from '../hooks/sounds'
 
 const BAND = {
@@ -318,7 +320,12 @@ test('the scene sleeps after a quiet spell and wakes when the person types', asy
   expect(await bats()).toBeGreaterThan(0)
 })
 
-test('the bats land while text is selected, so a mouse copy takes only the text', async ($, on) => {
+/**
+ * A reply in the fullscreen terminal under a flock, with the selection the
+ * engine reports set by the test (`select`) and the bats drawn over the reply
+ * counted (`bats`).
+ */
+async function replyUnderSelection($: Engine, on: On) {
   const clock = sessionBeneath(on)
   let selected: { text: string } | undefined
   on('ui.selection', () => ({ value: selected }))
@@ -337,19 +344,74 @@ test('the bats land while text is selected, so a mouse copy takes only the text'
     requestId: 'copied-reply',
     viewport: { columns: 110, rows: 40, isFullscreen: true },
   })
-  const bats = async () =>
-    (await reply.findAll({ type: 'Box', text: '🦇' })).filter(box => box.props.position === 'absolute').length
 
+  return {
+    clock,
+    reply,
+    select: (text: string | undefined) => {
+      selected = text === undefined ? undefined : { text }
+    },
+    bats: async () =>
+      (await reply.findAll({ type: 'Box', text: '🦇' })).filter(box => box.props.position === 'absolute').length,
+  }
+}
+
+test('the bats land while text is selected, so a mouse copy takes only the text', async ($, on) => {
+  const { clock, reply, select, bats } = await replyUnderSelection($, on)
   expect(await bats()).toBeGreaterThan(0)
 
-  selected = { text: 'worth copying' }
+  select('worth copying')
   await clock.advance(250)
   expect(await bats()).toBe(0)
   expect(await reply.find({ type: 'Text', text: 'a reply worth copying' })).toBeDefined()
 
-  selected = undefined
+  select(undefined)
   await clock.advance(250)
   expect(await bats()).toBeGreaterThan(0)
+})
+
+test('the bats fly again once the selection stops changing, though the engine still reports it', async ($, on) => {
+  const { clock, select, bats } = await replyUnderSelection($, on)
+
+  select('wor')
+  await clock.advance(250)
+  select('worth copying')
+  await clock.advance(500)
+  expect(await bats()).toBe(0)
+
+  await clock.advance(1_000)
+  expect(await bats()).toBeGreaterThan(0)
+})
+
+test('a bat crossing a highlight still up keeps the flock flying; a new selection lands it', async ($, on) => {
+  const { clock, select, bats } = await replyUnderSelection($, on)
+
+  select('worth copying')
+  await clock.advance(1_500)
+  expect(await bats()).toBeGreaterThan(0)
+
+  select('worth 🦇pying')
+  await clock.advance(250)
+  select('worth copying')
+  await clock.advance(250)
+  expect(await bats()).toBeGreaterThan(0)
+
+  select('a reply')
+  await clock.advance(250)
+  expect(await bats()).toBe(0)
+})
+
+test('a selection read with bats over it is the one before, with nothing else changed', () => {
+  expect(isUnderBats('worth copying', 'worth 🦇pying', '🦇')).toBe(true)
+  expect(isUnderBats('worth copying', 'wo🦇h c🦇ying', '🦇')).toBe(true)
+  expect(isUnderBats('a wide 名 here', 'a wide 🦇 here', '🦇')).toBe(true)
+  expect(isUnderBats('trimmed', 'trimmed🦇', '🦇')).toBe(true)
+  expect(isUnderBats('a.b*c', 'a.🦇c', '🦇')).toBe(true)
+
+  expect(isUnderBats('worth copying', 'worth copyin', '🦇')).toBe(false)
+  expect(isUnderBats('worth copying', 'other 🦇xt', '🦇')).toBe(false)
+  expect(isUnderBats('ab\ncd', 'a🦇cd', '🦇')).toBe(false)
+  expect(isUnderBats('axb*c', 'a.🦇c', '🦇')).toBe(false)
 })
 
 test('every bat flies whole, smooth journeys from one side to the other', () => {

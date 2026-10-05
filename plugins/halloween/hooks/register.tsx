@@ -4,6 +4,7 @@ import type { ElementTable, EngineInterface, Register, RenderElement, RenderInpu
 import { flockAt } from './bats'
 import { bottomRuleCells, createFrameLayout, sideGlyph, topRuleCells } from './frame'
 import type { Cell } from './frame'
+import { isUnderBats } from './selection'
 import { createEnterDeck, keystrokeClip } from './sounds'
 
 const isEnabled = atom({ plugin: 'halloween', key: 'isEnabled' } as const, true)
@@ -27,6 +28,12 @@ const TICKS_PER_FRAME_STEP = 2
 const IDLE_MS = 90_000
 const IDLE_TICKS = Math.round(IDLE_MS / ANIMATION_TICK_MS)
 const MIN_FRAME_COLUMNS = 30
+/**
+ * How long a selection stays the same before the bats fly again: by then the
+ * drag has ended and copy-on-select has taken the text.
+ */
+const SELECTION_SETTLE_MS = 1_000
+const SELECTION_SETTLE_TICKS = Math.round(SELECTION_SETTLE_MS / ANIMATION_TICK_MS)
 
 /** The hint line's garland, for where the frame cannot be drawn. */
 const HINT_TAIL = '   🎃 🍁 💀 🍂 🦇'
@@ -106,6 +113,9 @@ const visibleRows = new Map<string, number>()
 
 /** The row carrying the flock (`''` while none on screen does), and its order. */
 let flockRow = { requestId: '', order: -1 }
+
+/** The selection's text as the last tick read it, and for how many ticks it has stayed so. */
+let selection: { text: string | undefined; quietTicks: number } = { text: undefined, quietTicks: 0 }
 
 /** When the last keystroke sound played, in the clock's milliseconds. */
 let lastKeystrokeAt = Number.NEGATIVE_INFINITY
@@ -234,8 +244,8 @@ function conversationRowsOnScreen(): number {
  * pins anything placed past the conversation's edges to those edges, so a bat
  * there is left out until its journey brings it back over the conversation.
  *
- * The flock lands while text is selected: a mouse copy takes the cells on
- * screen, so a bat over the selection would be copied in place of the text
+ * The flock lands while text is being selected: a mouse copy takes the cells
+ * on screen, so a bat over the selection would be copied in place of the text
  * under it.
  */
 async function withFlock($: EngineInterface, e: TranscriptSite, row: RenderElement): Promise<RenderElement> {
@@ -311,16 +321,33 @@ async function wake($: EngineInterface): Promise<void> {
 }
 
 /**
- * Lands the flock while the person has text selected, and lets it fly again
- * once nothing is. The engine reports a selection while the mouse still drags,
- * so the bats are gone before the copy on release reads the screen. A surface
- * that cannot say counts as no selection.
+ * Lands the flock while the person is selecting text, and lets it fly again
+ * once the selection has stayed the same for SELECTION_SETTLE_MS. The engine
+ * reports a selection while the mouse still drags, so the bats are gone
+ * before copy-on-select reads the screen on release.
+ *
+ * It waits for the selection to settle, not to go: after a click takes the
+ * highlight down the engine keeps reporting the last selection, until the
+ * next prompt or command, and it reads the same as one still highlighted. A
+ * bat crossing a highlight still up changes its text without making it a new
+ * selection. A surface that cannot say counts as no selection.
  */
 async function checkSelection($: EngineInterface): Promise<void> {
-  const hasSelection = (await $.ui.selection().catch(() => undefined)) !== undefined
+  const text = (await $.ui.selection().catch(() => undefined))?.text
+  const isLanded = await read($, isSelecting)
+  const isBatCrossing =
+    !isLanded && text !== undefined && selection.text !== undefined && isUnderBats(selection.text, text, BAT)
 
-  if (hasSelection !== (await read($, isSelecting))) {
-    await update($, isSelecting, () => hasSelection)
+  if (text === selection.text || isBatCrossing) {
+    selection.quietTicks++
+  } else {
+    selection = { text, quietTicks: 0 }
+  }
+
+  const isNowSelecting = text !== undefined && selection.quietTicks < SELECTION_SETTLE_TICKS
+
+  if (isNowSelecting !== isLanded) {
+    await update($, isSelecting, () => isNowSelecting)
   }
 }
 
