@@ -414,6 +414,14 @@ test('a selection read with bats over it is the one before, with nothing else ch
   expect(isUnderBats('axb*c', 'a.🦇c', '🦇')).toBe(false)
 })
 
+test('a selection full of bats is checked as fast as a plain one', () => {
+  const started = Date.now()
+
+  expect(isUnderBats('x'.repeat(300), `${'🦇'.repeat(100)}y`, '🦇')).toBe(false)
+  expect(isUnderBats('x'.repeat(200), '🦇'.repeat(100), '🦇')).toBe(true)
+  expect(Date.now() - started).toBeLessThan(500)
+})
+
 test('every bat flies whole, smooth journeys from one side to the other', () => {
   const columns = 110
   const rows = 30
