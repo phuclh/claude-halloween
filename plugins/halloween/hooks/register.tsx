@@ -12,6 +12,7 @@ const draftRows = atom({ plugin: 'halloween', key: 'draftRows' } as const, 1)
 const frameTick = atom({ plugin: 'halloween', key: 'frameTick' } as const, 0)
 const flightTick = atom({ plugin: 'halloween', key: 'flightTick' } as const, 0)
 const isAwake = atom({ plugin: 'halloween', key: 'isAwake' } as const, false)
+const isSelecting = atom({ plugin: 'halloween', key: 'isSelecting' } as const, false)
 
 const STORE_KEY = 'isEnabled'
 const SOUNDS_STORE_KEY = 'hasSounds'
@@ -232,6 +233,10 @@ function conversationRowsOnScreen(): number {
  * only the bats over rows of conversation on screen are drawn: the terminal
  * pins anything placed past the conversation's edges to those edges, so a bat
  * there is left out until its journey brings it back over the conversation.
+ *
+ * The flock lands while text is selected: a mouse copy takes the cells on
+ * screen, so a bat over the selection would be copied in place of the text
+ * under it.
  */
 async function withFlock($: EngineInterface, e: TranscriptSite, row: RenderElement): Promise<RenderElement> {
   const { onScreen } = e.props
@@ -248,7 +253,7 @@ async function withFlock($: EngineInterface, e: TranscriptSite, row: RenderEleme
     return row
   }
 
-  if (!(await read($, isEnabled)) || !(await read($, isAwake))) {
+  if (!(await read($, isEnabled)) || !(await read($, isAwake)) || (await read($, isSelecting))) {
     return row
   }
 
@@ -305,6 +310,20 @@ async function wake($: EngineInterface): Promise<void> {
   await update($, isAwake, () => true)
 }
 
+/**
+ * Lands the flock while the person has text selected, and lets it fly again
+ * once nothing is. The engine reports a selection while the mouse still drags,
+ * so the bats are gone before the copy on release reads the screen. A surface
+ * that cannot say counts as no selection.
+ */
+async function checkSelection($: EngineInterface): Promise<void> {
+  const hasSelection = (await $.ui.selection().catch(() => undefined)) !== undefined
+
+  if (hasSelection !== (await read($, isSelecting))) {
+    await update($, isSelecting, () => hasSelection)
+  }
+}
+
 async function advance($: EngineInterface, clock: NonNullable<typeof animation>): Promise<void> {
   clock.idleTicks = isTurnRunning ? 0 : clock.idleTicks + 1
 
@@ -314,6 +333,7 @@ async function advance($: EngineInterface, clock: NonNullable<typeof animation>)
     return
   }
 
+  await checkSelection($)
   clock.ticks++
   await update($, flightTick, tick => tick + 1)
 

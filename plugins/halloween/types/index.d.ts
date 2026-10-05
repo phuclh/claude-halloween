@@ -10,6 +10,7 @@ declare module 'claude-code' {
       frameTick: number
       flightTick: number
       isAwake: boolean
+      isSelecting: boolean
     }
   }
 }

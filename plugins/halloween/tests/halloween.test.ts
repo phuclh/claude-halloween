@@ -318,6 +318,40 @@ test('the scene sleeps after a quiet spell and wakes when the person types', asy
   expect(await bats()).toBeGreaterThan(0)
 })
 
+test('the bats land while text is selected, so a mouse copy takes only the text', async ($, on) => {
+  const clock = sessionBeneath(on)
+  let selected: { text: string } | undefined
+  on('ui.selection', () => ({ value: selected }))
+  on('ui.render', { component: 'AssistantMessage' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+
+    return Text({ children: e.props.text })
+  })
+  await $.session.start(TERMINAL_SESSION)
+
+  const reply = await $.ui.mount({
+    plugin: 'halloween',
+    surface: 'terminal',
+    component: 'AssistantMessage',
+    props: { text: 'a reply worth copying', isFirstOfReply: true, onScreen: { first: 0, last: 19, of: 20 } },
+    requestId: 'copied-reply',
+    viewport: { columns: 110, rows: 40, isFullscreen: true },
+  })
+  const bats = async () =>
+    (await reply.findAll({ type: 'Box', text: '🦇' })).filter(box => box.props.position === 'absolute').length
+
+  expect(await bats()).toBeGreaterThan(0)
+
+  selected = { text: 'worth copying' }
+  await clock.advance(250)
+  expect(await bats()).toBe(0)
+  expect(await reply.find({ type: 'Text', text: 'a reply worth copying' })).toBeDefined()
+
+  selected = undefined
+  await clock.advance(250)
+  expect(await bats()).toBeGreaterThan(0)
+})
+
 test('every bat flies whole, smooth journeys from one side to the other', () => {
   const columns = 110
   const rows = 30
