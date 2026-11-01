@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ElementTable, EngineInterface, Register, RenderElement, RenderInput, RenderNode, Timer } from 'claude-code'
 
 import { flockAt } from './bats'
+import { rowsOfDraft, widthOf } from './cells'
 import { bottomRuleCells, createFrameLayout, sideGlyph, topRuleCells } from './frame'
 import type { Cell } from './frame'
 import { isUnderBats } from './selection'
@@ -47,6 +48,15 @@ const SPOOKY_MODE = '🦇 spooky season'
  * columns short of the right edge.
  */
 const MODES_RIGHT_MARGIN = 2
+/**
+ * The cells of the ` · ` the terminal puts before the mode labels when other
+ * footer items show (debug, IDE or cloud status), which the hook is not told.
+ * A blank this wide goes before the labels, so the site's left edge, which the
+ * frame is placed from, is the same either way. It is a sibling of the labels,
+ * not a box sized around them: the engine refuses its own drawing under a Box
+ * with a size, a place, `display` or `overflow`.
+ */
+const SEPARATOR_CELLS = 3
 const BOTTOM_RULE_ROW = -1
 
 const BAT = '🦇'
@@ -95,6 +105,9 @@ const PAST_WORDS = [
 /** The terminal's width as the prompt box last drew, for wrapping the draft. */
 let promptColumns = 80
 
+/** The draft in the prompt box as last edited, so its rows can be counted again at a new width. */
+let draftText = ''
+
 /** This load's scatter of props on the frame: rolled once, so redraws keep it. */
 const frameLayout = createFrameLayout()
 
@@ -142,13 +155,13 @@ function spookyWordFor(word: string, words: readonly string[]): string {
   return words[hashOf(word) % words.length] ?? word
 }
 
-/** Rows the draft takes in the prompt box: its lines, each wrapped to the box. */
-function rowsOfDraft(text: string): number {
-  const width = Math.max(10, promptColumns - 4)
+/** Counts the draft's rows at the width the prompt box last drew at, redrawing the frame when they changed. */
+async function fitDraft($: EngineInterface): Promise<void> {
+  const rows = rowsOfDraft(draftText, promptColumns)
 
-  return text
-    .split('\n')
-    .reduce((rows, line) => rows + Math.max(1, Math.ceil(Array.from(line).length / width)), 0)
+  if (rows !== (await read($, draftRows))) {
+    await update($, draftRows, () => rows)
+  }
 }
 
 /** Whether the frame is drawn here: the fullscreen terminal, wide enough for it. */
@@ -157,11 +170,6 @@ function isFramed(e: { surface: string; viewport?: { columns: number; isFullscre
   viewport: { columns: number; isFullscreen: true }
 } {
   return e.surface === 'terminal' && e.viewport?.isFullscreen === true && e.viewport.columns >= MIN_FRAME_COLUMNS
-}
-
-/** Cells a label takes in the terminal: two for an emoji, one for the rest. */
-function widthOf(text: string): number {
-  return Array.from(text).reduce((cells, character) => cells + ((character.codePointAt(0) ?? 0) > 0xffff ? 2 : 1), 0)
 }
 
 /**
@@ -239,10 +247,11 @@ function conversationRowsOnScreen(): number {
  * Draws a conversation row and, on the row carrying it in the fullscreen
  * terminal, the flock crossing the conversation above it.
  *
- * The flock flies a sky a screen tall, its bottom on this row's bottom, and
- * only the bats over rows of conversation on screen are drawn: the terminal
- * pins anything placed past the conversation's edges to those edges, so a bat
- * there is left out until its journey brings it back over the conversation.
+ * The flock flies a sky a screen tall, its bottom on the last row of this one
+ * on screen (its bottom, unless it runs past the screen's), and only the bats
+ * over rows of conversation on screen are drawn: the terminal pins anything
+ * placed past the conversation's edges to those edges, so a bat there is left
+ * out until its journey brings it back over the conversation.
  *
  * The flock lands while text is being selected: a mouse copy takes the cells
  * on screen, so a bat over the selection would be copied in place of the text
@@ -269,9 +278,9 @@ async function withFlock($: EngineInterface, e: TranscriptSite, row: RenderEleme
 
   const { Box, Text } = $.ui.resolve(e)
   const { columns, rows: screenRows } = e.viewport
-  const skyRows = Math.max(1, screenRows - PROMPT_AREA_ROWS - (await read($, draftRows)))
+  const skyRows = Math.max(1, screenRows - PROMPT_AREA_ROWS - rowsOfDraft(draftText, promptColumns))
   const shownRows = Math.min(skyRows, conversationRowsOnScreen())
-  const skyTop = onScreen.of - skyRows
+  const skyTop = onScreen.last + 1 - skyRows
   const tick = await read($, flightTick)
   const bats = flockAt(flockSeed, columns, skyRows, tick).filter(spot => spot.y >= skyRows - shownRows)
 
@@ -287,11 +296,24 @@ async function withFlock($: EngineInterface, e: TranscriptSite, row: RenderEleme
   )
 }
 
-/** Stops the clock and hides what moves: bats go home, the ghost leaves. */
-async function sleep($: EngineInterface): Promise<void> {
-  animation?.timer.cancel()
+/**
+ * Stops a clock, the running one unless another is named, and when that is
+ * the running one hides what moves: bats go home, the ghost leaves.
+ */
+async function sleep($: EngineInterface, clock: typeof animation = animation): Promise<void> {
+  clock?.timer.cancel()
+
+  if (clock === undefined || clock !== animation) {
+    return
+  }
+
   animation = undefined
   await update($, isAwake, () => false)
+}
+
+/** The clock running now, read afresh: an `await` may have started or stopped one. */
+function runningClock(): typeof animation {
+  return animation
 }
 
 /**
@@ -306,6 +328,15 @@ async function wake($: EngineInterface): Promise<void> {
   }
 
   if (!(await read($, isEnabled))) {
+    return
+  }
+
+  // Another wake may have started the clock while this one read the theme.
+  const started = runningClock()
+
+  if (started !== undefined) {
+    started.idleTicks = 0
+
     return
   }
 
@@ -352,10 +383,16 @@ async function checkSelection($: EngineInterface): Promise<void> {
 }
 
 async function advance($: EngineInterface, clock: NonNullable<typeof animation>): Promise<void> {
+  if (clock !== animation) {
+    clock.timer.cancel()
+
+    return
+  }
+
   clock.idleTicks = isTurnRunning ? 0 : clock.idleTicks + 1
 
   if (clock.idleTicks > IDLE_TICKS) {
-    await sleep($)
+    await sleep($, clock)
 
     return
   }
@@ -444,6 +481,7 @@ async function setTheme($: EngineInterface, isOn: boolean): Promise<void> {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    draftText = ''
     await $.command.register({
       name: 'halloween',
       description: 'Toggle the Halloween theme (bats, pumpkins, skulls around the prompt); "sounds" toggles its sounds',
@@ -494,11 +532,8 @@ export const register: Register = on => {
     void wake($)
     void soundKeystroke($, e)
     const box = await next(e)
-    const rows = rowsOfDraft(box.text)
-
-    if (rows !== (await read($, draftRows))) {
-      await update($, draftRows, () => rows)
-    }
+    draftText = box.text
+    await fitDraft($)
 
     return box
   })
@@ -506,15 +541,23 @@ export const register: Register = on => {
   on('prompt.fill', async ($, e, next) => {
     void wake($)
     const filled = await next(e)
-    const box = await $.prompt.read()
-    await update($, draftRows, () => rowsOfDraft(box.text))
+    draftText = (await $.prompt.read()).text
+    await fitDraft($)
 
     return filled
   })
 
+  on('prompt.change', async ($, e, next) => {
+    draftText = e.text
+    await fitDraft($)
+
+    return next(e)
+  })
+
   on('prompt.submit', async ($, e, next) => {
     void wake($)
-    await update($, draftRows, () => 1)
+    draftText = ''
+    await fitDraft($)
 
     if (e.origin.kind === 'composer' && (await isSounding($))) {
       soundEnter($)
@@ -564,16 +607,23 @@ export const register: Register = on => {
     }
 
     const { columns } = e.viewport
+
     promptColumns = columns
-    const rows = await read($, draftRows)
+    // Read for the redraw a new row count brings, but counted here at this
+    // width: a resize wraps the draft again with no edit, and a drawing may
+    // not write state.
+    await read($, draftRows)
+    const rows = rowsOfDraft(draftText, columns)
     const tick = await read($, frameTick)
     const hasGhost = await read($, isAwake)
     const { Box, Text } = $.ui.resolve(e)
-    const siteLeft = columns - MODES_RIGHT_MARGIN - widthOf(modes.join(' & '))
+    const siteWidth = widthOf(modes.join(' & ')) + SEPARATOR_CELLS
+    const siteLeft = columns - MODES_RIGHT_MARGIN - siteWidth
     const topRuleRow = BOTTOM_RULE_ROW - rows - 1
 
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="row">
+        <Box width={SEPARATOR_CELLS} />
         {labels}
         <Box position="absolute" top={topRuleRow} left={-siteLeft} width={columns}>
           {drawCells(Text, topRuleCells(frameLayout, columns, tick, hasGhost))}

@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { batAt, flockSize } from '../hooks/bats'
+import { rowsOfDraft, widthOf } from '../hooks/cells'
 import { bottomRuleCells, createFrameLayout, PALETTE, topRuleCells } from '../hooks/frame'
 import { isUnderBats } from '../hooks/selection'
 import { BAT_CLIPS, CRACK_CLIPS, ENTER_CLIPS, KEYSTROKE_GAP_MS, keystrokeClip } from '../hooks/sounds'
@@ -34,6 +35,9 @@ const ENTER = { text: 'boo', wait: false, origin: { kind: 'composer' } } as cons
 
 const FULLSCREEN = { columns: 60, rows: 30, isFullscreen: true }
 
+/** The blank the frame keeps before the mode labels for the footer's ` · ` separator. */
+const SEPARATOR_CELLS = 3
+
 /** The footer's mode labels, which the frame hangs from, in the fullscreen terminal. */
 const MODE_LABELS = {
   plugin: 'halloween',
@@ -53,11 +57,14 @@ function drawModeLabels(on: On): void {
 }
 
 /** The frame's pieces placed against the labels: rules span the terminal, sides sit at its right edge. */
-async function framePieces(labels: { findAll: (query: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) {
+async function framePieces(
+  labels: { findAll: (query: { type: string }) => Promise<{ props: Record<string, unknown> }[]> },
+  columns = FULLSCREEN.columns,
+) {
   const placed = (await labels.findAll({ type: 'Box' })).filter(box => box.props.position === 'absolute')
 
   return {
-    rules: placed.filter(box => box.props.width === FULLSCREEN.columns).map(box => ({ top: box.props.top, left: box.props.left })),
+    rules: placed.filter(box => box.props.width === columns).map(box => ({ top: box.props.top, left: box.props.left })),
     sides: placed.filter(box => box.props.width === undefined).map(box => ({ top: box.props.top, left: box.props.left })),
   }
 }
@@ -176,7 +183,7 @@ test('the haunted frame hangs from the mode labels onto the prompt box rules and
   on('prompt.read', () => ({ value: { text: draft, cursor: draft.length } }))
 
   const labels = await $.ui.mount(MODE_LABELS)
-  const labelsLeft = FULLSCREEN.columns - 2 - '🦇 spooky season'.length
+  const labelsLeft = FULLSCREEN.columns - 2 - widthOf('🦇 spooky season') - SEPARATOR_CELLS
 
   expect(await labels.find({ type: 'Text', text: '🦇 spooky season' })).toBeDefined()
   expect(await framePieces(labels)).toEqual({
@@ -198,9 +205,69 @@ test('the frame stays on the prompt box when other mode labels sit beside the th
   drawModeLabels(on)
 
   const labels = await $.ui.mount({ ...MODE_LABELS, props: { modes: ['focus'] } })
-  const labelsLeft = FULLSCREEN.columns - 2 - 'focus & 🦇 spooky season'.length
+  const labelsLeft = FULLSCREEN.columns - 2 - widthOf('focus & 🦇 spooky season') - SEPARATOR_CELLS
 
   expect((await framePieces(labels)).rules.map(rule => rule.left)).toEqual([-labelsLeft, -labelsLeft])
+})
+
+test('the frame hangs from the footer labels the engine draws, a blank before them for the separator', async ($, on) => {
+  on('ui.render', { component: 'SessionMode' }, () => ({ type: 'engine', ref: 0 }))
+
+  const labels = await $.ui.mount(MODE_LABELS)
+  const boxes = await labels.findAll({ type: 'Box' })
+  const siteLeft = FULLSCREEN.columns - 2 - widthOf('🦇 spooky season') - SEPARATOR_CELLS
+
+  expect(boxes[0]?.props.flexDirection).toBe('row')
+  expect(boxes[1]?.props.width).toBe(SEPARATOR_CELLS)
+  expect((await framePieces(labels)).rules.map(rule => rule.left)).toEqual([-siteLeft, -siteLeft])
+})
+
+test('the draft counts wide characters as two cells when it wraps', () => {
+  expect(widthOf('🦇 spooky season')).toBe(16)
+  expect(rowsOfDraft('a'.repeat(50), 100)).toBe(1)
+  expect(rowsOfDraft('字'.repeat(50), 100)).toBe(2)
+  expect(rowsOfDraft('one\ntwo', 100)).toBe(2)
+  expect(rowsOfDraft('a'.repeat(90), 50)).toBe(2)
+  expect(widthOf('🎃')).toBe(2)
+  expect(widthOf('🧛🏽')).toBe(2)
+  expect(widthOf('👨‍👩‍👧')).toBe(2)
+  expect(widthOf('❤️')).toBe(2)
+  expect(widthOf('🇻🇳🇺🇸')).toBe(4)
+  expect(widthOf('é')).toBe(1)
+  expect(rowsOfDraft('🎃'.repeat(49), 100)).toBe(2)
+  expect(rowsOfDraft('🧛🏽'.repeat(25), 100)).toBe(1)
+})
+
+test('the draft wraps by word, as the composer does', () => {
+  const word = 'x'.repeat(50)
+  expect(rowsOfDraft([word, word, word].join(' '), 100)).toBe(3)
+  expect(rowsOfDraft('a b', 100)).toBe(1)
+  expect(rowsOfDraft('y'.repeat(200), 100)).toBe(3)
+  expect(rowsOfDraft(`ab ${'y'.repeat(96)}`, 100)).toBe(2)
+  expect(rowsOfDraft(`${'z'.repeat(96)} `, 100)).toBe(2)
+  expect(rowsOfDraft('', 100)).toBe(1)
+})
+
+test('the frame follows the draft when the terminal narrows and it wraps onto another row', async ($, on) => {
+  drawModeLabels(on)
+  let draft = ''
+  on('prompt.fill', ($, e) => {
+    draft = e.text
+
+    return { isFilled: true }
+  })
+  on('prompt.read', () => ({ value: { text: draft, cursor: draft.length } }))
+
+  const labels = await $.ui.mount(MODE_LABELS)
+  await $.prompt.fill({ text: 'x'.repeat(50), mode: 'replace', origin: { kind: 'engine' } })
+  expect((await framePieces(labels)).rules.map(rule => rule.top)).toEqual([-3, -1])
+
+  await labels.unmount()
+
+  const narrower = await $.ui.mount({ ...MODE_LABELS, viewport: { ...FULLSCREEN, columns: 40 } })
+  expect((await framePieces(narrower, 40)).rules.map(rule => rule.top)).toEqual([-4, -1])
+
+  await $.prompt.fill({ text: '', mode: 'replace', origin: { kind: 'engine' } })
 })
 
 test('the frame animates on its own clock once the session starts', async ($, on) => {
@@ -217,6 +284,43 @@ test('the frame animates on its own clock once the session starts', async ($, on
   }
 
   expect(frames.size).toBeGreaterThan(1)
+})
+
+test('the scene runs on one clock, however many things wake it at once', async ($, on) => {
+  let clocksStarted = 0
+  // The mocked clock, counting the calls its repeating timers make.
+  const counting = ((event: string, ...rest: unknown[]) => {
+    const hook = rest[rest.length - 1] as (...args: unknown[]) => unknown
+
+    if (event === 'clock.every') {
+      rest[rest.length - 1] = (...args: unknown[]) => {
+        clocksStarted++
+
+        return hook(...args)
+      }
+    }
+
+    return (on as unknown as (...args: unknown[]) => unknown)(event, ...rest)
+  }) as unknown as On
+  const clock = mock.clock(counting)
+  mock.store(on, {})
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  recordPlays(on)
+  await $.session.start(TERMINAL_SESSION)
+
+  const timerCallsAfter = async (wakes: number) => {
+    await clock.advance(100_000)
+    const before = clocksStarted
+    await Promise.all(Array.from({ length: wakes }, () => $.prompt.submit(ENTER)))
+    await clock.advance(1_000)
+
+    return clocksStarted - before
+  }
+
+  const alone = await timerCallsAfter(1)
+  expect(alone).toBeGreaterThan(0)
+  expect(await timerCallsAfter(3)).toBe(alone)
 })
 
 test('every rule is exactly as wide as the terminal, lanterns glowing and a ghost passing', () => {
@@ -282,6 +386,35 @@ test('the newest conversation row on screen carries the flock over the rows abov
 
   expect(await batsOn(newer)).toHaveLength(0)
   expect((await batsOn(older)).length).toBeGreaterThan(0)
+})
+
+test('the flock flies over the part of a reply on screen when the rest is scrolled below', async ($, on) => {
+  const clock = sessionBeneath(on)
+  on('ui.render', { component: 'AssistantMessage' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+
+    return Text({ children: e.props.text })
+  })
+  await $.session.start(TERMINAL_SESSION)
+
+  const reply = await $.ui.mount({
+    plugin: 'halloween',
+    surface: 'terminal',
+    component: 'AssistantMessage',
+    props: { text: 'a long reply', isFirstOfReply: true, onScreen: { first: 0, last: 19, of: 40 } },
+    requestId: 'flock-scrolled',
+    viewport: { columns: 110, rows: 40, isFullscreen: true },
+  })
+  const tops: number[] = []
+
+  for (let step = 0; step < 80; step++) {
+    const bats = (await reply.findAll({ type: 'Box', text: '🦇' })).filter(box => box.props.position === 'absolute')
+    tops.push(...bats.map(bat => Number(bat.props.top)))
+    await clock.advance(125)
+  }
+
+  expect(tops.length).toBeGreaterThan(0)
+  expect(Math.max(...tops)).toBeLessThanOrEqual(19)
 })
 
 test('the scene sleeps after a quiet spell and wakes when the person types', async ($, on) => {
