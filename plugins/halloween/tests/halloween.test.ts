@@ -604,6 +604,7 @@ test('the flock stays small enough to read through', () => {
 })
 
 test('Enter stays quiet until /halloween sounds, then never plays the same sound twice running', async ($, on) => {
+  const clock = mock.clock(on)
   mock.store(on)
   const played = recordPlays(on)
 
@@ -614,6 +615,7 @@ test('Enter stays quiet until /halloween sounds, then never plays the same sound
   expect(played).toHaveLength(1)
 
   for (let enter = 0; enter < 12; enter++) {
+    await clock.advance(2_000)
     await $.prompt.submit(ENTER)
   }
 
@@ -624,8 +626,35 @@ test('Enter stays quiet until /halloween sounds, then never plays the same sound
   played.slice(1).forEach((clip, index) => expect(clip).not.toBe(played[index]))
 
   expect((await $.command.run(SOUNDS_COMMAND)).text).toMatch(/sounds off/)
+  await clock.advance(2_000)
   await $.prompt.submit(ENTER)
   expect(played).toHaveLength(13)
+})
+
+test('a slash command or skill typed gets an Enter sound too, once even if it sends a prompt on', async ($, on) => {
+  const clock = sessionBeneath(on, { hasSounds: true })
+  const played = recordPlays(on)
+  on('command.run', () => ({ text: '' }))
+  await $.session.start(TERMINAL_SESSION)
+  const typed = (command: string, args = '') => $.command.run({ ...HALLOWEEN_COMMAND, command, args })
+
+  await typed('commit')
+  expect(played).toHaveLength(1)
+  expect(ENTER_CLIPS as readonly string[]).toContain(played[0])
+
+  await $.prompt.submit(ENTER)
+  expect(played).toHaveLength(1)
+
+  await clock.advance(2_000)
+  await $.command.run({ ...HALLOWEEN_COMMAND, command: 'compact', origin: { kind: 'plugin', name: 'other' } })
+  expect(played).toHaveLength(1)
+
+  await typed('compact')
+  expect(played).toHaveLength(2)
+
+  await clock.advance(2_000)
+  await typed('halloween')
+  expect(played).toHaveLength(2)
 })
 
 test('the sounds stay on in a new session, for the person\'s own Enter, and hush while the theme is off', async ($, on) => {

@@ -137,6 +137,13 @@ let lastKeystrokeAt = Number.NEGATIVE_INFINITY
 const nextEnterClip = createEnterDeck()
 let enterClip: AbortController | undefined
 
+/**
+ * When Enter last sounded, so a slash command and the prompt it may send on
+ * make one Enter sound.
+ */
+let lastEnterAt = Number.NEGATIVE_INFINITY
+const ONE_ENTER_MS = 1_000
+
 function hashOf(text: string): number {
   let hash = 0
 
@@ -433,6 +440,25 @@ async function soundKeystroke($: EngineInterface, edit: { start: number; end: nu
   }
 }
 
+/**
+ * The person pressed Enter on a prompt or a slash command: with sounds on, an
+ * Enter sound, once within ONE_ENTER_MS.
+ */
+async function enterPressed($: EngineInterface): Promise<void> {
+  if (!(await isSounding($))) {
+    return
+  }
+
+  const now = await $.clock.now()
+
+  if (now - lastEnterAt < ONE_ENTER_MS) {
+    return
+  }
+
+  lastEnterAt = now
+  soundEnter($)
+}
+
 /** The next laugh, wail, organ or thunder in the deck, cutting off the last one. */
 function soundEnter($: EngineInterface): void {
   enterClip?.abort()
@@ -501,6 +527,18 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A slash command or skill the person typed runs as a command, not a prompt:
+  // its Enter sounds here, before `/halloween`'s own hook answers it. That one
+  // makes its own sound or turns the sounds off, so it is left alone.
+  on('command.run', async ($, e, next) => {
+    if (e.origin.kind === 'composer' && e.command !== 'halloween') {
+      void wake($)
+      await enterPressed($)
+    }
+
+    return next(e)
+  })
+
   on('command.run', { command: 'halloween' }, async ($, e) => {
     const option = e.args.trim()
 
@@ -559,8 +597,8 @@ export const register: Register = on => {
     draftText = ''
     await fitDraft($)
 
-    if (e.origin.kind === 'composer' && (await isSounding($))) {
-      soundEnter($)
+    if (e.origin.kind === 'composer') {
+      await enterPressed($)
     }
 
     return next(e)
