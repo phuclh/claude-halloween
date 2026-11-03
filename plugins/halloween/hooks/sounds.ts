@@ -21,6 +21,66 @@ export const ENTER_CLIPS = [
 /** Fewest milliseconds between two keystroke sounds, so fast typing or a held key never drones. */
 export const KEYSTROKE_GAP_MS = 70
 
+/**
+ * The most clips the engine plays at once for one plugin: it refuses a play
+ * past them. The mod shares them out so typing never takes the one Enter
+ * needs: typing gets TYPING_PLAYS, Enter one.
+ */
+export const ENGINE_PLAYS = 4
+export const TYPING_PLAYS = ENGINE_PLAYS - 1
+
+/** Plays clips, at most so many at once (createVoices). */
+export type Voices = {
+  play: (start: (signal: AbortSignal) => Promise<unknown>, stop?: AbortController) => Promise<void>
+  stopAll: () => void
+}
+
+/**
+ * Plays clips with at most `size` sounding at once, so the engine never
+ * refuses one. A clip past them stops the oldest and starts once the engine
+ * has let that one go; when newer clips come while it waits, only the newest
+ * starts. `stop` stops the clip, before it starts or while it plays, and the
+ * promise settles once the clip is over: played, stopped or dropped.
+ * `stopAll` stops every clip playing and drops those waiting.
+ */
+export function createVoices(size: number): Voices {
+  const live: { stop: AbortController; done: Promise<void> }[] = []
+  let newest = 0
+
+  return {
+    play: async (start, stop = new AbortController()) => {
+      const ticket = ++newest
+
+      while (live.length >= size) {
+        const oldest = live[0] as (typeof live)[number]
+        oldest.stop.abort()
+        await oldest.done
+
+        if (ticket !== newest) {
+          return
+        }
+      }
+
+      if (stop.signal.aborted) {
+        return
+      }
+
+      // This play's own wait is the first on `done`, so the clip leaves `live` before a waiting clip looks again.
+      const voice = { stop, done: start(stop.signal).then(() => undefined, () => undefined) }
+      live.push(voice)
+      await voice.done
+      live.splice(live.indexOf(voice), 1)
+    },
+    stopAll: () => {
+      newest++
+
+      for (const voice of live) {
+        voice.stop.abort()
+      }
+    },
+  }
+}
+
 /** The share of keystrokes that crack lightning instead of a bat squeak. */
 const CRACK_SHARE = 0.2
 

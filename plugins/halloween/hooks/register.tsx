@@ -6,7 +6,8 @@ import { rowsOfDraft, widthOf } from './cells'
 import { bottomRuleCells, createFrameLayout, sideGlyph, topRuleCells } from './frame'
 import type { Cell } from './frame'
 import { isUnderBats } from './selection'
-import { createEnterDeck, keystrokeClip } from './sounds'
+import { createEnterDeck, createVoices, keystrokeClip, TYPING_PLAYS } from './sounds'
+import type { Voices } from './sounds'
 
 const isEnabled = atom({ plugin: 'halloween', key: 'isEnabled' } as const, true)
 const hasSounds = atom({ plugin: 'halloween', key: 'hasSounds' } as const, false)
@@ -135,7 +136,10 @@ let lastKeystrokeAt = Number.NEGATIVE_INFINITY
 
 /** Deals the next Enter sound, and stops the one still playing when it does. */
 const nextEnterClip = createEnterDeck()
-let enterClip: AbortController | undefined
+
+/** The engine's plays shared out (ENGINE_PLAYS), so fast typing never leaves Enter without one. */
+const typingVoices = createVoices(TYPING_PLAYS)
+const enterVoices = createVoices(1)
 
 /**
  * When Enter last sounded, so a slash command and the prompt it may send on
@@ -418,11 +422,12 @@ async function isSounding($: EngineInterface): Promise<boolean> {
 }
 
 /**
- * Plays one of the plugin's clips without holding up the hook that asked; a
- * terminal with no player plays nothing.
+ * Plays one of the plugin's clips on `voices`, within their share of the
+ * engine's plays, without holding up the hook that asked; a terminal with no
+ * player plays nothing.
  */
-function play($: EngineInterface, asset: string, signal?: AbortSignal): void {
-  $.audio.play({ asset }, signal === undefined ? undefined : { signal }).catch(() => undefined)
+function play($: EngineInterface, voices: Voices, asset: string): void {
+  void voices.play(signal => $.audio.play({ asset }, { signal }))
 }
 
 /** A bat squeaks or lightning cracks for an edit the person typed. */
@@ -436,7 +441,7 @@ async function soundKeystroke($: EngineInterface, edit: { start: number; end: nu
 
   if (clip !== undefined) {
     lastKeystrokeAt = now
-    play($, clip)
+    play($, typingVoices, clip)
   }
 }
 
@@ -461,9 +466,7 @@ async function enterPressed($: EngineInterface): Promise<void> {
 
 /** The next laugh, wail, organ or thunder in the deck, cutting off the last one. */
 function soundEnter($: EngineInterface): void {
-  enterClip?.abort()
-  enterClip = new AbortController()
-  play($, nextEnterClip(), enterClip.signal)
+  play($, enterVoices, nextEnterClip())
 }
 
 async function toggleSounds($: EngineInterface): Promise<{ text: string }> {
@@ -472,7 +475,8 @@ async function toggleSounds($: EngineInterface): Promise<{ text: string }> {
   await $.store.set(SOUNDS_STORE_KEY, isNowOn)
 
   if (!isNowOn) {
-    enterClip?.abort()
+    enterVoices.stopAll()
+    typingVoices.stopAll()
 
     return { text: 'Spooky sounds off. Run /halloween sounds to bring them back.' }
   }
@@ -501,7 +505,8 @@ async function setTheme($: EngineInterface, isOn: boolean): Promise<void> {
     return
   }
 
-  enterClip?.abort()
+  enterVoices.stopAll()
+  typingVoices.stopAll()
   await sleep($)
 }
 
