@@ -56,15 +56,21 @@ function drawModeLabels(on: On): void {
   })
 }
 
-/** The frame's pieces placed against the labels: rules span the terminal, sides sit at its right edge. */
+/**
+ * The frame's pieces placed against the labels: rules span the terminal, sides
+ * sit at its right edge, and spare rules lie a terminal's width further left.
+ */
 async function framePieces(
   labels: { findAll: (query: { type: string }) => Promise<{ props: Record<string, unknown> }[]> },
   columns = FULLSCREEN.columns,
 ) {
   const placed = (await labels.findAll({ type: 'Box' })).filter(box => box.props.position === 'absolute')
+  const spanning = placed.filter(box => box.props.width === columns)
+  const isSpare = (box: { props: Record<string, unknown> }) => Number(box.props.left) <= -columns
 
   return {
-    rules: placed.filter(box => box.props.width === columns).map(box => ({ top: box.props.top, left: box.props.left })),
+    rules: spanning.filter(box => !isSpare(box)).map(box => ({ top: box.props.top, left: box.props.left })),
+    spares: spanning.filter(isSpare).map(box => ({ top: box.props.top, left: box.props.left })),
     sides: placed.filter(box => box.props.width === undefined).map(box => ({ top: box.props.top, left: box.props.left })),
   }
 }
@@ -234,6 +240,10 @@ test('the haunted frame hangs from the mode labels onto the prompt box rules and
       { top: -3, left: -labelsLeft },
       { top: -1, left: -labelsLeft },
     ],
+    spares: [
+      { top: -3, left: -labelsLeft - FULLSCREEN.columns },
+      { top: -1, left: -labelsLeft - FULLSCREEN.columns },
+    ],
     sides: [{ top: -2, left: FULLSCREEN.columns - 2 - labelsLeft }],
   })
 
@@ -265,6 +275,34 @@ test('the frame hangs from the footer labels the engine draws, a blank before th
   expect((await framePieces(labels)).rules.map(rule => rule.left)).toEqual([-siteLeft, -siteLeft])
 })
 
+test('beside a docked pane the frame keeps the width of the terminal, which a resize or a typed command tells again', async ($, on) => {
+  sessionBeneath(on)
+  on('command.run', () => ({ text: '' }))
+  on('ui.render', { component: 'SessionMode' }, () => ({ type: 'engine', ref: 0 }))
+  await $.session.start(TERMINAL_SESSION)
+
+  const label = widthOf('🦇 spooky season')
+  /** The frame's width and where it starts from the labels, drawn for a footer told `columns` across and `rows` down. */
+  const frameAt = async (columns: number, rows: number) => {
+    const labels = await $.ui.mount({ ...MODE_LABELS, viewport: { columns, rows, isFullscreen: true } })
+    const rule = (await labels.findAll({ type: 'Box' })).find(box => box.props.position === 'absolute' && typeof box.props.width === 'number')
+    await labels.unmount()
+
+    return { width: rule?.props.width, left: rule?.props.left }
+  }
+
+  expect(await frameAt(150, 41)).toEqual({ width: 150, left: -(150 - 2 - label - SEPARATOR_CELLS) })
+  // A pane docks: the footer is told the transcript's width, and the frame still spans the terminal.
+  expect(await frameAt(83, 41)).toEqual({ width: 150, left: -(150 - 2 - label - SEPARATOR_CELLS) })
+
+  // A new height means the window was resized, so the width told is the terminal's.
+  expect(await frameAt(90, 40)).toEqual({ width: 90, left: -(90 - 2 - label - SEPARATOR_CELLS) })
+
+  // A typed slash command says the terminal's width exactly.
+  await $.command.run({ ...HALLOWEEN_COMMAND, command: 'commit', presentation: { isFullscreen: true, columns: 120 } })
+  expect(await frameAt(70, 40)).toEqual({ width: 120, left: -(120 - 2 - label - SEPARATOR_CELLS) })
+})
+
 test('the draft counts wide characters as two cells when it wraps', () => {
   expect(widthOf('🦇 spooky season')).toBe(16)
   expect(rowsOfDraft('a'.repeat(50), 100)).toBe(1)
@@ -291,7 +329,7 @@ test('the draft wraps by word, as the composer does', () => {
   expect(rowsOfDraft('', 100)).toBe(1)
 })
 
-test('the frame follows the draft when the terminal narrows and it wraps onto another row', async ($, on) => {
+test('the frame follows the draft when the window is resized narrower and it wraps onto another row', async ($, on) => {
   drawModeLabels(on)
   let draft = ''
   on('prompt.fill', ($, e) => {
@@ -307,7 +345,8 @@ test('the frame follows the draft when the terminal narrows and it wraps onto an
 
   await labels.unmount()
 
-  const narrower = await $.ui.mount({ ...MODE_LABELS, viewport: { ...FULLSCREEN, columns: 40 } })
+  // A resized window changes height too; a narrower width at the same height is a docked pane (the next test).
+  const narrower = await $.ui.mount({ ...MODE_LABELS, viewport: { ...FULLSCREEN, columns: 40, rows: FULLSCREEN.rows - 1 } })
   expect((await framePieces(narrower, 40)).rules.map(rule => rule.top)).toEqual([-4, -1])
 
   await $.prompt.fill({ text: '', mode: 'replace', origin: { kind: 'engine' } })

@@ -106,6 +106,25 @@ const PAST_WORDS = [
 /** The terminal's width as the prompt box last drew, for wrapping the draft. */
 let promptColumns = 80
 
+/**
+ * The terminal's size as the mod knows it. The prompt box and its footer span
+ * the terminal, but a drawing is told its column's width, which beside a
+ * docked pane (a question, another mod's panel) is the transcript's alone.
+ * So the widest width seen stands while the height stays the same: a new
+ * height means the window itself was resized, and a slash command the person
+ * types says the terminal's width exactly.
+ */
+let terminal = { columns: 0, rows: 0 }
+
+/** The prompt box's width for a drawing told `viewport`: the terminal's, as far as the mod knows. */
+function promptBoxColumns(viewport: { columns: number; rows: number }): number {
+  if (viewport.rows !== terminal.rows || viewport.columns > terminal.columns) {
+    terminal = { columns: viewport.columns, rows: viewport.rows }
+  }
+
+  return terminal.columns
+}
+
 /** The draft in the prompt box as last edited, so its rows can be counted again at a new width. */
 let draftText = ''
 
@@ -536,6 +555,10 @@ export const register: Register = on => {
   // its Enter sounds here, before `/halloween`'s own hook answers it. That one
   // makes its own sound or turns the sounds off, so it is left alone.
   on('command.run', async ($, e, next) => {
+    if (e.presentation.isFullscreen) {
+      terminal = { ...terminal, columns: e.presentation.columns }
+    }
+
     if (e.origin.kind === 'composer' && e.command !== 'halloween') {
       void wake($)
       await enterPressed($)
@@ -649,7 +672,7 @@ export const register: Register = on => {
       return labels
     }
 
-    const { columns } = e.viewport
+    const columns = promptBoxColumns(e.viewport)
 
     promptColumns = columns
     // Read for the redraw a new row count brings, but counted here at this
@@ -670,6 +693,13 @@ export const register: Register = on => {
         {labels}
         <Box position="absolute" top={topRuleRow} left={-siteLeft} width={columns}>
           {drawCells(Text, topRuleCells(frameLayout, columns, tick, hasGhost))}
+        </Box>
+        {/* Spare frame to the left, past the screen's edge while the width above is the terminal's; it fills the row while a pane docked before the mod could see the whole terminal. */}
+        <Box position="absolute" top={topRuleRow} left={-siteLeft - columns} width={columns}>
+          {drawCells(Text, topRuleCells(frameLayout, columns, tick, false))}
+        </Box>
+        <Box position="absolute" top={BOTTOM_RULE_ROW} left={-siteLeft - columns} width={columns}>
+          {drawCells(Text, bottomRuleCells(frameLayout, columns, tick))}
         </Box>
         {Array.from({ length: rows }, (_, index) => (
           <Box position="absolute" top={BOTTOM_RULE_ROW - rows + index} left={columns - 2 - siteLeft}>
