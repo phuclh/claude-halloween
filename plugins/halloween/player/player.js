@@ -60,16 +60,22 @@ function run(argv) {
   /** Loaded players resting, per clip path. */
   const spares = new Map()
 
-  const playerFor = path => {
-    const rested = spares.get(path)?.pop()
-    if (rested !== undefined) {
-      rested.player.currentTime = 0
-      return rested
-    }
+  const freshPlayer = path => {
     const player = $.AVAudioPlayer.alloc.initWithContentsOfURLError($.NSURL.fileURLWithPath(path), null)
     if (player.isNil()) return undefined
     player.prepareToPlay
     return { player, path }
+  }
+
+  // A player that has played to its end answers `play` without playing again
+  // until it is stopped, so a rested one is stopped, rewound and prepared first.
+  const playerFor = path => {
+    const rested = spares.get(path)?.pop()
+    if (rested === undefined) return freshPlayer(path)
+    rested.player.stop
+    rested.player.currentTime = 0
+    rested.player.prepareToPlay
+    return rested
   }
 
   const rest = entry => {
@@ -81,20 +87,28 @@ function run(argv) {
   const finish = (id, word) => {
     const entry = playing.get(id)
     if (entry === undefined) return
-    if (entry.player.isPlaying) entry.player.stop
+    entry.player.stop
     playing.delete(id)
     rest(entry)
     say(`${word} ${id}`)
   }
 
-  const play = (id, volume, path) => {
-    const entry = playerFor(path)
-    if (entry === undefined) {
-      say(`failed ${id}`)
-      return
-    }
+  /** Starts the clip on `entry`, true once it is really playing. */
+  const start = (entry, volume) => {
     entry.player.volume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1
-    if (!entry.player.play) {
+    return entry.player.play && entry.player.isPlaying
+  }
+
+  const play = (id, volume, path) => {
+    let entry = playerFor(path)
+    let isPlaying = entry !== undefined && start(entry, volume)
+    if (!isPlaying) {
+      // One more go on a freshly loaded player before giving the clip back to the mod.
+      entry = freshPlayer(path)
+      isPlaying = entry !== undefined && start(entry, volume)
+    }
+    log(`started ${id} ${isPlaying}`)
+    if (!isPlaying) {
       say(`failed ${id}`)
       return
     }

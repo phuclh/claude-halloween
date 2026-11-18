@@ -52,6 +52,7 @@ With sounds on, a keystroke plays at most one sound every 70 ms, through the one
 claude --plugin-dir ./plugins/halloween       # run it from this folder
 claude plugin validate ./plugins/halloween    # check the manifest and hooks
 claude plugin test ./plugins/halloween        # run the tests
+node scripts/check-player.mjs                # check the sound player on this Mac, silently
 ```
 
 The demo above is drawn by the plugin's own frame and flight code. To render it again after a change:
