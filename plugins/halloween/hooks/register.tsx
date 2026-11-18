@@ -5,6 +5,8 @@ import { flockAt } from './bats'
 import { rowsOfDraft, widthOf } from './cells'
 import { bottomRuleCells, createFrameLayout, sideGlyph, topRuleCells } from './frame'
 import type { Cell } from './frame'
+import { createPlayer } from './player'
+import type { PlayerHost } from './player'
 import { isUnderBats } from './selection'
 import { createEnterDeck, createVoices, keystrokeClip, TYPING_PLAYS } from './sounds'
 import type { Voices } from './sounds'
@@ -440,13 +442,40 @@ async function isSounding($: EngineInterface): Promise<boolean> {
   return (await read($, hasSounds)) && (await read($, isEnabled))
 }
 
+/** The session's one player, which every clip goes through where it runs. */
+const player = createPlayer()
+
+/** What the player reaches through this hook's engine interface. */
+function playerHost($: EngineInterface): PlayerHost {
+  return {
+    root: $.plugin.root,
+    dataFolder: async () => {
+      const env = await $.process.hookEnv()
+
+      return env.CLAUDE_PLUGIN_DATA ?? `${$.plugin.root}/.data`
+    },
+    spawn: argv => $.process.spawn({ argv }),
+    write: (path, text) => $.fs.write(path, text),
+    sleep: ms => $.clock.sleep(ms),
+  }
+}
+
+/** Plays a clip through the session's player, or with the engine's own playback where the player cannot play it. */
+async function sound($: EngineInterface, asset: string, signal: AbortSignal): Promise<void> {
+  if (await player.play(playerHost($), asset, signal)) {
+    return
+  }
+
+  await $.audio.play({ asset }, { signal })
+}
+
 /**
  * Plays one of the plugin's clips on `voices`, within their share of the
  * engine's plays, without holding up the hook that asked; a terminal with no
  * player plays nothing.
  */
 function play($: EngineInterface, voices: Voices, asset: string): void {
-  void voices.play(signal => $.audio.play({ asset }, { signal }))
+  void voices.play(signal => sound($, asset, signal))
 }
 
 /** A bat squeaks or lightning cracks for an edit the person typed. */

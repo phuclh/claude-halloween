@@ -32,7 +32,7 @@ Then start a new session.
 ## Use
 
 - `/halloween` turns the theme off and on. Your choice is remembered across sessions.
-- `/halloween sounds` turns the sounds on and off, and is remembered too. Sounds play on macOS only: Claude Code plays them with `afplay`, and plays nothing on Linux or Windows.
+- `/halloween sounds` turns the sounds on and off, and is remembered too. Sounds play on macOS only. The theme plays them all through one small player it starts with macOS's own `osascript`, so your speakers get one steady audio stream instead of a new one for every key (a stream per key made Apple Studio Display speakers buzz until replugged). The player stops after two minutes without a sound and starts again with the next one. Where it cannot run, Claude Code plays the sounds with `afplay`; it plays nothing on Linux or Windows.
 - After 90 seconds with no typing and no work from Claude, the animation pauses and stops using CPU. It wakes as soon as you type or Claude starts working.
 
 ## Requirements
@@ -44,7 +44,7 @@ Then start a new session.
 
 While animating, the theme redraws the screen 8 times a second, which costs about 8–11% of one CPU core on a 110×40 terminal. Once paused, it costs nothing.
 
-With sounds on, each keystroke starts a short `afplay`, at most one every 70 ms. That adds about 0.02 s of CPU per keystroke, and only while you type.
+With sounds on, a keystroke plays at most one sound every 70 ms, through the one player. The player uses about 3% of one CPU core while you type and about 1% at rest, and leaves after two minutes without a sound.
 
 ## Develop
 
